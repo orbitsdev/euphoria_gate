@@ -9,14 +9,9 @@ class Program
     // ===========================
     // SDK Function Imports
     // ===========================
-    [DllImport("HCNetSDK.dll")]
-    public static extern bool NET_DVR_Init();
-
-    [DllImport("HCNetSDK.dll")]
-    public static extern bool NET_DVR_Cleanup();
-
-    [DllImport("HCNetSDK.dll")]
-    public static extern uint NET_DVR_GetLastError();
+    [DllImport("HCNetSDK.dll")] public static extern bool NET_DVR_Init();
+    [DllImport("HCNetSDK.dll")] public static extern bool NET_DVR_Cleanup();
+    [DllImport("HCNetSDK.dll")] public static extern uint NET_DVR_GetLastError();
 
     [DllImport("HCNetSDK.dll")]
     public static extern int NET_DVR_Login_V30(
@@ -26,8 +21,7 @@ class Program
         string sPassword,
         ref NET_DVR_DEVICEINFO_V30 lpDeviceInfo);
 
-    [DllImport("HCNetSDK.dll")]
-    public static extern bool NET_DVR_Logout(int lUserID);
+    [DllImport("HCNetSDK.dll")] public static extern bool NET_DVR_Logout(int lUserID);
 
     [DllImport("HCNetSDK.dll")]
     public static extern int NET_DVR_StartListen_V30(
@@ -36,8 +30,7 @@ class Program
         MSGCallBack fMessageCallBack,
         IntPtr pUserData);
 
-    [DllImport("HCNetSDK.dll")]
-    public static extern bool NET_DVR_StopListen_V30(int lListenHandle);
+    [DllImport("HCNetSDK.dll")] public static extern bool NET_DVR_StopListen_V30(int lListenHandle);
 
     // ===========================
     // SDK Structures
@@ -45,8 +38,7 @@ class Program
     [StructLayout(LayoutKind.Sequential)]
     public struct NET_DVR_DEVICEINFO_V30
     {
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 48)]
-        public byte[] sSerialNumber;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 48)] public byte[] sSerialNumber;
         public byte byAlarmInPortNum;
         public byte byAlarmOutPortNum;
         public byte byDiskNum;
@@ -55,8 +47,7 @@ class Program
         public byte byStartChan;
         public byte byAudioChanNum;
         public byte byIPChanNum;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 24)]
-        public byte[] byRes2;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 24)] public byte[] byRes2;
     }
 
     // ===========================
@@ -71,16 +62,12 @@ class Program
 
     private static int listenHandle = -1;
     private static int userId = -1;
+    private static ManualResetEvent quitEvent = new ManualResetEvent(false);
 
     // ===========================
     // Callback Implementation
     // ===========================
-    private static bool AlarmCallback(
-        int lCommand,
-        IntPtr pAlarmer,
-        IntPtr pAlarmInfo,
-        uint dwBufLen,
-        IntPtr pUser)
+    private static bool AlarmCallback(int lCommand, IntPtr pAlarmer, IntPtr pAlarmInfo, uint dwBufLen, IntPtr pUser)
     {
         try
         {
@@ -99,11 +86,11 @@ class Program
     // ===========================
     static void Main(string[] args)
     {
-        // 1. Load configuration
+        // Load configuration
         IConfiguration config = new ConfigurationBuilder()
            .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
-            .Build();
+           .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+           .Build();
 
         string deviceIp = config["Hikvision:Ip"];
         int devicePort = int.Parse(config["Hikvision:Port"]);
@@ -114,70 +101,93 @@ class Program
         Console.WriteLine($"[{DateTime.Now}] Starting GateEventListener...");
         Console.WriteLine($"Device IP: {deviceIp}, Port: {devicePort}, User: {username}, ListenPort: {listenPort}");
 
-        // 2. Setup SDK DLL path
+        // Set SDK DLL path
         string sdkPath = Path.Combine(AppContext.BaseDirectory, "sdk");
         Environment.SetEnvironmentVariable("PATH",
             sdkPath + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"));
 
-        // 3. Init SDK
-        if (!NET_DVR_Init())
-        {
-            uint err = NET_DVR_GetLastError();
-            Console.Error.WriteLine($"[{DateTime.Now}] SDK init failed. Error={err} ({HikvisionErrorHelper.GetErrorMessage(err)})");
-            return;
-        }
-
-        Console.WriteLine($"[{DateTime.Now}] SDK initialized successfully.");
-
-        // 4. Login to device
-        NET_DVR_DEVICEINFO_V30 deviceInfo = new NET_DVR_DEVICEINFO_V30();
-        userId = NET_DVR_Login_V30(deviceIp, devicePort, username, password, ref deviceInfo);
-        if (userId < 0)
-        {
-            uint err = NET_DVR_GetLastError();
-            Console.Error.WriteLine($"Login failed. Error={err} ({HikvisionErrorHelper.GetErrorMessage(err)})");
-            NET_DVR_Cleanup();
-            return;
-        }
-        Console.WriteLine($"[{DateTime.Now}] Login successful. UserID={userId}");
-
-        // 5. Start listening
-        listenHandle = NET_DVR_StartListen_V30(null, listenPort, AlarmCallback, IntPtr.Zero);
-        if (listenHandle < 0)
-        {
-            uint err = NET_DVR_GetLastError();
-            Console.Error.WriteLine($"[{DateTime.Now}] Listener start failed. Error={err} ({HikvisionErrorHelper.GetErrorMessage(err)})");
-            NET_DVR_Logout(userId);
-            NET_DVR_Cleanup();
-            return;
-        }
-
-        Console.WriteLine($"[{DateTime.Now}] Listening started on port {listenPort}.");
-
-        // 6. Keep running until Ctrl+C
-        Console.WriteLine("Press Ctrl+C to exit...");
-        ManualResetEvent quitEvent = new ManualResetEvent(false);
         Console.CancelKeyPress += (sender, eArgs) =>
         {
             eArgs.Cancel = true;
             quitEvent.Set();
         };
-        quitEvent.WaitOne();
 
-        // 7. Shutdown
-        if (listenHandle >= 0)
+        // ===========================
+        // Forever Loop
+        // ===========================
+        while (!quitEvent.WaitOne(0))
         {
-            NET_DVR_StopListen_V30(listenHandle);
-            Console.WriteLine($"[{DateTime.Now}] Listener stopped.");
+            try
+            {
+                if (!NET_DVR_Init())
+                {
+                    uint err = NET_DVR_GetLastError();
+                    Console.Error.WriteLine($"[{DateTime.Now}] SDK init failed. Error={err} ({HikvisionErrorHelper.GetErrorMessage(err)})");
+                    Thread.Sleep(5000);
+                    continue;
+                }
+
+                Console.WriteLine($"[{DateTime.Now}] SDK initialized successfully.");
+
+                NET_DVR_DEVICEINFO_V30 deviceInfo = new NET_DVR_DEVICEINFO_V30();
+                userId = NET_DVR_Login_V30(deviceIp, devicePort, username, password, ref deviceInfo);
+
+                if (userId < 0)
+                {
+                    uint err = NET_DVR_GetLastError();
+                    Console.Error.WriteLine($"[{DateTime.Now}] Login failed. Error={err} ({HikvisionErrorHelper.GetErrorMessage(err)})");
+                    NET_DVR_Cleanup();
+                    Thread.Sleep(5000);
+                    continue;
+                }
+
+                Console.WriteLine($"[{DateTime.Now}] Login successful. UserID={userId}");
+
+                listenHandle = NET_DVR_StartListen_V30(null, listenPort, AlarmCallback, IntPtr.Zero);
+                if (listenHandle < 0)
+                {
+                    uint err = NET_DVR_GetLastError();
+                    Console.Error.WriteLine($"[{DateTime.Now}] Listener start failed. Error={err} ({HikvisionErrorHelper.GetErrorMessage(err)})");
+                    NET_DVR_Logout(userId);
+                    NET_DVR_Cleanup();
+                    Thread.Sleep(5000);
+                    continue;
+                }
+
+                Console.WriteLine($"[{DateTime.Now}] Listening started on port {listenPort}.");
+                Console.WriteLine("Press Ctrl+C to exit...");
+
+                // Wait until exit requested
+                quitEvent.WaitOne();
+
+                // Stop listening
+                if (listenHandle >= 0)
+                {
+                    NET_DVR_StopListen_V30(listenHandle);
+                    Console.WriteLine($"[{DateTime.Now}] Listener stopped.");
+                }
+
+                if (userId >= 0)
+                {
+                    NET_DVR_Logout(userId);
+                    Console.WriteLine($"[{DateTime.Now}] Logged out of device.");
+                }
+
+                NET_DVR_Cleanup();
+                Console.WriteLine($"[{DateTime.Now}] SDK cleaned up.");
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[{DateTime.Now}] FATAL ERROR: {ex.Message}");
+            }
+
+            if (!quitEvent.WaitOne(0))
+            {
+                Console.WriteLine($"[{DateTime.Now}] Will retry in 5 seconds...");
+                Thread.Sleep(5000);
+            }
         }
 
-        if (userId >= 0)
-        {
-            NET_DVR_Logout(userId);
-            Console.WriteLine($"[{DateTime.Now}] Logged out of device.");
-        }
-
-        NET_DVR_Cleanup();
-        Console.WriteLine($"[{DateTime.Now}] SDK cleaned up. Exiting...");
+        Console.WriteLine($"[{DateTime.Now}] GateEventListener shutting down gracefully.");
     }
 }
