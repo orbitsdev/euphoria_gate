@@ -3,6 +3,70 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Extensions.Configuration;
+// Event time
+[StructLayout(LayoutKind.Sequential)]
+public struct NET_DVR_TIME
+{
+    public uint dwYear;
+    public uint dwMonth;
+    public uint dwDay;
+    public uint dwHour;
+    public uint dwMinute;
+    public uint dwSecond;
+}
+
+// ACS event info (QR, Card, etc.)
+[StructLayout(LayoutKind.Sequential)]
+public struct NET_DVR_ACS_EVENT_INFO
+{
+    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+    public byte[] byCardNo; // card or QR string
+    public byte byCardType;
+    public byte byDoorNo;
+    public byte byReaderNo;
+    public byte byDeviceNo;
+    public byte byVerifyMode;
+    public byte byNetworkChannel;
+    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
+    public byte[] byRes; // reserved
+}
+
+// ACS alarm info (wrapper for full event)
+[StructLayout(LayoutKind.Sequential)]
+public struct NET_DVR_ACS_ALARM_INFO
+{
+    public uint dwSize;
+    public NET_DVR_TIME struTime;
+    public uint dwMajor;
+    public uint dwMinor;
+    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+    public byte[] sNetUser;
+    public NET_DVR_ACS_EVENT_INFO struAcsEventInfo;
+}
+public static class HikvisionEventHelper
+{
+    public static string GetEventDescription(uint dwMajor, uint dwMinor)
+    {
+        // Major event types
+        if (dwMajor == 5) // Major type: Access Control
+        {
+            switch (dwMinor)
+            {
+                case 0: return "Unknown ACS Event";
+                case 1: return "Access Granted";
+                case 2: return "Access Denied";
+                case 3: return "Door Opened Normally";
+                case 4: return "Door Forced Open";
+                case 5: return "Door Held Open Too Long";
+                case 53: return "Invalid Card/QR";
+                case 75: return "Valid QR Access";
+                default: return $"ACS Event (Minor={dwMinor})";
+            }
+        }
+
+        return $"Other Event (Major={dwMajor}, Minor={dwMinor})";
+    }
+}
 
 class Program
 {
@@ -71,15 +135,31 @@ class Program
     {
         try
         {
-            Console.WriteLine($"[{DateTime.Now}] Event received. Command={lCommand}, DataLength={dwBufLen}");
-            // TODO: parse ACS alarm info and detect QR code events
+            if (lCommand == 0x5002) // COMM_ALARM_ACS
+            {
+                NET_DVR_ACS_ALARM_INFO alarmInfo = Marshal.PtrToStructure<NET_DVR_ACS_ALARM_INFO>(pAlarmInfo);
+
+                string cardOrQR = System.Text.Encoding.UTF8.GetString(alarmInfo.struAcsEventInfo.byCardNo).TrimEnd('\0');
+                string eventDesc = HikvisionEventHelper.GetEventDescription(alarmInfo.dwMajor, alarmInfo.dwMinor);
+
+                Console.WriteLine(
+                    $"[{DateTime.Now}] Event: {eventDesc}, " +
+                    $"CardOrQR={cardOrQR}, Door={alarmInfo.struAcsEventInfo.byDoorNo}, Reader={alarmInfo.struAcsEventInfo.byReaderNo}");
+            }
+            else
+            {
+                Console.WriteLine($"[{DateTime.Now}] Unknown event. Command={lCommand}, DataLength={dwBufLen}");
+            }
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"[{DateTime.Now}] ERROR in callback: {ex.Message}");
         }
+
         return true;
     }
+
+
 
     // ===========================
     // Main Entry
