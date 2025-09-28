@@ -1,8 +1,9 @@
-﻿using System;
+﻿using Microsoft.Extensions.Configuration;
+using System;
 using System.IO;
+using System.Net.Http.Json;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Microsoft.Extensions.Configuration;
 // Event time
 [StructLayout(LayoutKind.Sequential)]
 public struct NET_DVR_TIME
@@ -43,23 +44,73 @@ public struct NET_DVR_ACS_ALARM_INFO
     public byte[] sNetUser;
     public NET_DVR_ACS_EVENT_INFO struAcsEventInfo;
 }
+
+
+public static class LaravelApi
+{
+    private static readonly HttpClient client = new HttpClient();
+
+    public static async Task<bool> ValidateQr(string qrCode)
+    {
+        var response = await client.PostAsJsonAsync("http://laravel-app/api/validate-qr", new { qr_code = qrCode });
+        if (!response.IsSuccessStatusCode) return false;
+
+        var result = await response.Content.ReadFromJsonAsync<dynamic>();
+        return result?.status == "ok";
+    }
+}
+
+public static class AspNetApi
+{
+    private static readonly HttpClient client = new HttpClient();
+
+    public static async Task<bool> OpenDoor()
+    {
+        var response = await client.PostAsJsonAsync("http://aspnet-service/open-door", new
+        {
+            ip = "192.170.80.251",
+            port = 8000,
+            username = "admin",
+            password = "Hikvision_2025",
+            gatewayIndex = 1,
+            command = 1 // OPEN
+        });
+        return response.IsSuccessStatusCode;
+    }
+}
+
 public static class HikvisionEventHelper
 {
     public static string GetEventDescription(uint dwMajor, uint dwMinor)
     {
-        // Major event types
-        if (dwMajor == 5) // Major type: Access Control
+        if (dwMajor == 5) // Access Control Events
         {
             switch (dwMinor)
             {
-                case 0: return "Unknown ACS Event";
                 case 1: return "Access Granted";
                 case 2: return "Access Denied";
                 case 3: return "Door Opened Normally";
                 case 4: return "Door Forced Open";
                 case 5: return "Door Held Open Too Long";
+                case 6: return "Invalid Door Open Request";
+                case 7: return "Exit Button Pressed";
+                case 8: return "Multi-card Open Successful";
+                case 9: return "Multi-card Open Failed";
+                case 10: return "First Card Open Successful";
+                case 11: return "First Card Open Failed";
+                case 12: return "Door Not Closed";
+                case 20: return "Anti-passback Violation";
+                case 21: return "Interlock Violation";
+                case 22: return "Intrusion Alarm";
+                case 23: return "Duress Alarm";
+                case 24: return "Tamper Alarm";
                 case 53: return "Invalid Card/QR";
                 case 75: return "Valid QR Access";
+                case 100: return "Super Password Unlock";
+                case 101: return "Remote Open Door";
+                case 102: return "Remote Close Door";
+                case 103: return "Remote Always Open";
+                case 104: return "Remote Always Closed";
                 default: return $"ACS Event (Minor={dwMinor})";
             }
         }
@@ -131,6 +182,48 @@ class Program
     // ===========================
     // Callback Implementation
     // ===========================
+
+    //NET_DVR_ACS_ALARM_INFO with api
+
+    //private static bool AlarmCallback(int lCommand, IntPtr pAlarmer, IntPtr pAlarmInfo, uint dwBufLen, IntPtr pUser)
+    //{
+    //    try
+    //    {
+    //        if (lCommand == 0x5002) // COMM_ALARM_ACS
+    //        {
+    //            NET_DVR_ACS_ALARM_INFO alarmInfo = Marshal.PtrToStructure<NET_DVR_ACS_ALARM_INFO>(pAlarmInfo);
+    //            string cardOrQR = System.Text.Encoding.UTF8.GetString(alarmInfo.struAcsEventInfo.byCardNo).TrimEnd('\0');
+
+    //            Console.WriteLine($"[{DateTime.Now}] QR/Card Event detected: {cardOrQR}");
+
+    //            // 1. Call Laravel API for validation
+    //            var isValid = LaravelApi.ValidateQr(cardOrQR).Result;  // HTTP POST
+
+    //            if (isValid)
+    //            {
+    //                Console.WriteLine($"[{DateTime.Now}] QR {cardOrQR} validated → calling ASP.NET to open door...");
+
+    //                // 2. Call ASP.NET API to open the door
+    //                var opened = AspNetApi.OpenDoor().Result;
+
+    //                if (opened)
+    //                    Console.WriteLine($"[{DateTime.Now}] Door opened successfully.");
+    //                else
+    //                    Console.WriteLine($"[{DateTime.Now}] Door open request FAILED.");
+    //            }
+    //            else
+    //            {
+    //                Console.WriteLine($"[{DateTime.Now}] QR {cardOrQR} is INVALID (denied).");
+    //            }
+    //        }
+    //    }
+    //    catch (Exception ex)
+    //    {
+    //        Console.Error.WriteLine($"[{DateTime.Now}] ERROR in callback: {ex.Message}");
+    //    }
+    //    return true;
+    //}
+
     private static bool AlarmCallback(int lCommand, IntPtr pAlarmer, IntPtr pAlarmInfo, uint dwBufLen, IntPtr pUser)
     {
         try
